@@ -889,7 +889,7 @@ def dispatch(line):
         ci = params.get('clientInfo',{})
         log.info(f'[{tid}] 连接: {ci.get("name","?")} v{ci.get("version","?")}')
         return _jr(mid, {'protocolVersion':'2024-11-05','capabilities':{'tools':{}},
-                         'serverInfo':{'name':'web-search-v2','version':'3.1.0'}})
+                         'serverInfo':{'name':'web-search','version':'3.1.0'}})
     if method in ('notifications/initialized','notifications/cancelled'): return None
     if method == 'shutdown': return _jr(mid, None)
     if method == 'exit': raise SystemExit()
@@ -940,7 +940,7 @@ def dispatch(line):
 def _run_stdio():
     socket.setdefaulttimeout(30)
     li = f'{CFG["default_limit"]}字符' if CFG['default_limit']>0 else '无限制'
-    log.info(f'启动 v3.1.0 (STDIO) | 代理:{CFG["proxy"] or "无"} | TTL:{CFG["ttl"]}s | 缓存:{CFG["cap"]} | 默认:{li}')
+    log.info(f'启动 web-search v3.1.0 (STDIO) | 代理:{CFG["proxy"] or "无"} | TTL:{CFG["ttl"]}s | 缓存:{CFG["cap"]} | 默认:{li}')
     log.info(f'工具({len(TOOLS)}): {", ".join(TOOLS.keys())}')
     if ENABLED_TOOLS: log.info(f'启禁: 白名单 {ENABLED_TOOLS}')
     if DISABLED_TOOLS: log.info(f'启禁: 黑名单 {DISABLED_TOOLS}')
@@ -986,7 +986,7 @@ def _run_http():
         def do_GET(self):
             self._norm_path()
             if self.path in ('/ping', '/'):
-                msg = json.dumps({'status':'ok', 'service':'web-search-v2', 'version':'3.1.0',
+                msg = json.dumps({'status':'ok', 'service':'web-search', 'version':'3.1.0',
                                   'tools':list(TOOLS.keys()), 'cache':_cache.stats()}, ensure_ascii=False)
                 self.send_response(200); self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(msg))); self.end_headers()
@@ -994,14 +994,14 @@ def _run_http():
             else: self.send_error(404, 'Not Found')
 
     server = HTTPServer((CFG['http_host'], CFG['http_port']), MCPHTTPHandler)
-    log.info(f'启动 v3.1.0 (HTTP) | {CFG["http_host"]}:{CFG["http_port"]} | stateless:{CFG["stateless"]}')
+    log.info(f'启动 web-search v3.1.0 (HTTP) | {CFG["http_host"]}:{CFG["http_port"]} | stateless:{CFG["stateless"]}')
     log.info(f'工具({len(TOOLS)}): {", ".join(TOOLS.keys())}')
     try: server.serve_forever()
     except KeyboardInterrupt: server.shutdown(); log.info('HTTP服务已停止')
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='web-search-v2 MCP Server')
+    parser = argparse.ArgumentParser(description='web-search v3.1.0 MCP Server')
     parser.add_argument('--transport', choices=['stdio','http'], default=CFG['transport'])
     parser.add_argument('--port', type=int, default=CFG['http_port'])
     parser.add_argument('--host', type=str, default=CFG['http_host'])

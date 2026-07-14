@@ -1,10 +1,10 @@
-# web-search-v2 MCP Server v3.1.0
+# web-search v3.1.0 MCP Server
 
 基于 Bing 搜索引擎的 MCP 服务器，提供**网页搜索**、**图片搜索**、**新闻搜索**、**视频搜索**和**网页内容抓取**，纯 Python 标准库零依赖。
 
 ## 功能
 
-| 工具 | 说用 |
+| 工具 | 说明 |
 |------|------|
 | `search_web` | 搜索网络（Bing 中英双语），支持时间/安全/分页过滤 |
 | `search_images` | 搜索图片，返回 URL、尺寸、来源页面 |
@@ -33,14 +33,37 @@
 
 - Python 3.8+
 
-## MCP 配置
+## 快速开始
+
+### 克隆仓库
+
+```bash
+git clone https://github.com/flt1milize/web-search-v2.git
+cd web-search-v2
+```
+
+### 在 Cline 中使用
+
+将以下内容添加到 Cline 的 MCP 配置中（`cline_mcp_settings.json`）：
 
 ```json
 {
   "mcpServers": {
-    "web-search-v2 v3.1.0": {
+    "web-search v3.1.0": {
+      "autoApprove": [
+        "search_web",
+        "search_images",
+        "search_news",
+        "search_videos",
+        "fetch_webpage",
+        "fetch_markdown",
+        "cache_stats"
+      ],
+      "disabled": false,
+      "timeout": 120,
+      "type": "stdio",
       "command": "python",
-      "args": ["-u", "C:\\path\\to\\server.py"],
+      "args": ["-u", "/path/to/web-search-v2/server.py"],
       "env": {
         "PYTHONIOENCODING": "utf-8"
       }
