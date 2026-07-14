@@ -944,18 +944,13 @@ def dispatch(line):
                                      no_cache=v.get('no_cache', False))
                 _log_timing(tid, name, t_start)
                 return _jr(mid, _tr(result))
-            if name == 'fetch_webpage':
+            if name in ('fetch_webpage', 'fetch_markdown'):
                 v = validate_args(args, _schema_from_tool(name))
+                args_kw = {'no_cache': v.get('no_cache', False)}
+                if name == 'fetch_markdown':
+                    args_kw.update({'fmt': 'markdown', 'readable': v.get('readable', True)})
                 result = _fetch_url(v['url'], v.get('max_length', 5000), v.get('start_index', 0),
-                                    _parse_headers(v.get('headers')), no_cache=v.get('no_cache', False))
-                _log_timing(tid, name, t_start)
-                return _jr(mid, _tr(result))
-            if name == 'fetch_markdown':
-                v = validate_args(args, _schema_from_tool(name))
-                result = _fetch_url(v['url'], v.get('max_length', 5000), v.get('start_index', 0),
-                                        _parse_headers(v.get('headers')), fmt='markdown',
-                                        readable=v.get('readable', True),
-                                        no_cache=v.get('no_cache', False))
+                                    _parse_headers(v.get('headers')), **args_kw)
                 _log_timing(tid, name, t_start)
                 return _jr(mid, _tr(result))
             if name == 'cache_stats':
