@@ -16,7 +16,7 @@
 
   保留能力: SSRF防护 / 流式读取 / HTML→Markdown / 正文提取 / 表格转换 / JSON检测 / LRU缓存 / 自适应限速
 """
-import gzip, html as _html, json, logging, os, random, re, socket, ssl, sys, time, uuid
+import gzip, html as _html, json, logging, os, random, re, socket, ssl, sys, threading, time, uuid
 from collections import OrderedDict
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
@@ -163,17 +163,26 @@ def _make_opener(verify=True):
     return build_opener(*handlers)
 
 # ═══════════════════════════════════════════════════════════════
-# 自适应限速 — 暴露状态
+# 自适应限速 — 线程安全 + 暴露状态
 # ═══════════════════════════════════════════════════════════════
-_t0, _bo, _blocked_count = 0.0, 0.5, 0
-def _throttle():
-    global _t0, _bo
-    d = random.uniform(0.5, max(2.0, _bo))
-    if (elapsed := time.time() - _t0) < d: time.sleep(d - elapsed)
-    _t0 = time.time()
+class _RateLimiter:
+    """线程安全的限速器，使用 Lock 保护共享状态（参考 CPython threading.Lock 最佳实践）"""
+    def __init__(s): s._lock = threading.Lock(); s._t0 = 0.0; s._bo = 0.5; s._blocked = 0
+    def throttle(s):
+        with s._lock:
+            d = random.uniform(0.5, max(2.0, s._bo))
+            if (elapsed := time.time() - s._t0) < d: time.sleep(d - elapsed)
+            s._t0 = time.time()
+    def mark_blocked(s):
+        with s._lock: s._bo = min(s._bo * 2, 60); s._blocked += 1
+    def mark_ok(s):
+        with s._lock: s._bo = max(s._bo * 0.9, 0.5)
+    def status(s) -> dict:
+        with s._lock: return {'current_backoff_seconds': round(s._bo, 1), 'blocked_count': s._blocked}
 
-def get_rate_limit_status() -> dict:
-    return {'current_backoff_seconds': round(_bo, 1), 'blocked_count': _blocked_count}
+_limiter = _RateLimiter()
+_throttle = _limiter.throttle
+get_rate_limit_status = _limiter.status
 
 # ═══════════════════════════════════════════════════════════════
 # LRU 缓存 — no_cache + 统计
@@ -684,11 +693,10 @@ def _search_bing_lang(query, count, lang='zh-Hans', freshness=None,
         log.warning(f'  搜索失败({lang}/{search_type}): {e}')
         return [], {}
     if _is_blocked(html):
-        global _bo, _blocked_count
-        _bo = min(_bo*2, 60); _blocked_count += 1
-        log.warning(f'  反爬, 退避 {_bo:.0f}s (累计被封:{_blocked_count}次)')
+        _limiter.mark_blocked()
+        log.warning(f'  反爬, 退避 {_limiter._bo:.0f}s (累计被封:{_limiter._blocked}次)')
         return [], {}
-    _bo = max(_bo*0.9, 0.5)
+    _limiter.mark_ok()
     meta = _extract_meta(html) if search_type == 'web' else {}
     parser = SEARCH_PARSERS.get(search_type, _parse_bing)
     return parser(html, count), meta
