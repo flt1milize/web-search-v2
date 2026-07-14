@@ -420,7 +420,16 @@ _RE_R_ITEM = re.compile(r'<li[^>]*class="[^"]*b_(?:algo|ans|rs|_ad)[^"]*"[^>]*>(
 _RE_R_H2A  = re.compile(r'<(?:h2|h3|h4)[^>]*>\s*<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', re.DOTALL)
 _RE_R_AH2  = re.compile(r'<a[^>]*href="(https?://[^"]+)"[^>]*>\s*<(?:h2|h3|h4)[^>]*>(.*?)</(?:h2|h3|h4)>', re.DOTALL)
 _RE_R_SNIP = re.compile(r'<(?:p|div)[^>]*>(.*?)</(?:p|div)>', re.DOTALL)
-_RE_R_SELF = re.compile(r'bing\.com|microsoft\.com', re.I)
+_SELF_DOMAINS = frozenset({'bing.com', 'microsoft.com', 'www.bing.com', 'www.microsoft.com'})
+
+def _is_self_domain(url: str) -> bool:
+    """基于 hostname 精确判断 URL 是否为搜索引擎自身域名，避免子串误判"""
+    try:
+        host = (urlparse(url).hostname or '').lower()
+        # 精确匹配：hostname == domain 或以 .domain 结尾（覆盖子域）
+        return host in _SELF_DOMAINS or any(host.endswith('.' + d) for d in ('bing.com', 'microsoft.com'))
+    except Exception:
+        return True  # 无法解析则保守拒绝
 
 def _parse_regex(html, count):
     body = re.sub(r'<head[^>]*>.*?</head>', '', html, flags=re.DOTALL|re.I); body = _RE_SCRIPT.sub(' ', body)
@@ -430,7 +439,7 @@ def _parse_regex(html, count):
         chunk = m.group(1); link = _RE_R_H2A.search(chunk) or _RE_R_AH2.search(chunk)
         if not link: continue
         u, t = link.group(1), clean_text(link.group(2))
-        if not t or not u or u in seen or _RE_R_SELF.search(u): continue
+        if not t or not u or u in seen or _is_self_domain(u): continue
         seen.add(u); sn = _RE_R_SNIP.search(chunk)
         results.append({'title':_html.unescape(t),'url':_html.unescape(u),
                         'snippet':_html.unescape(clean_text(sn.group(1) or '') if sn else ''),'type':'web'})
@@ -444,7 +453,7 @@ def _parse_bing(html, count):
         seen, out = set(), []
         for r in p.results:
             u = r['url']
-            if u in seen or 'bing.com' in u or 'microsoft.com' in u: continue
+            if u in seen or _is_self_domain(u): continue
             seen.add(u); out.append(_enrich_result(r))
             if len(out) >= count: break
         return out
@@ -497,7 +506,7 @@ def _parse_bing_images(html: str, count: int) -> list:
         for m in _RE_IMG_SRC.finditer(body):
             if len(results) >= count: break
             img_url = m.group(1)
-            if img_url in seen or 'bing.com' in img_url: continue
+            if img_url in seen or _is_self_domain(img_url): continue
             if re.search(r'(icon|avatar|logo|favicon)', img_url, re.I): continue
             seen.add(img_url)
             results.append(_enrich_result({'title':'','url':img_url,'image_url':img_url,'type':'image','snippet':''}))
@@ -525,7 +534,7 @@ def _parse_bing_news(html: str, count: int) -> list:
             a_match = _RE_NEWS_A.search(block)
             if not a_match: continue
             u, t = a_match.group(1), clean_text(a_match.group(2))
-            if not t or not u or u in seen or 'bing.com' in u: continue
+            if not t or not u or u in seen or _is_self_domain(u): continue
             seen.add(u)
             date_match = _RE_NEWS_DATE.search(block)
             source_match = _RE_NEWS_SOURCE.search(block)
@@ -551,7 +560,7 @@ def _parse_bing_videos(html: str, count: int) -> list:
         a_match = _RE_R_H2A.search(block) or _RE_R_AH2.search(block) or _RE_NEWS_A.search(block)
         if not a_match: continue
         u, t = a_match.group(1), clean_text(a_match.group(2))
-        if not t or not u or u in seen or 'bing.com' in u: continue
+        if not t or not u or u in seen or _is_self_domain(u): continue
         seen.add(u)
         thumb_match = _RE_VIDEO_THUMB.search(block)
         dur_match = _RE_VIDEO_DUR.search(block)
@@ -592,7 +601,7 @@ def _filter_headers(custom_headers: Optional[dict]) -> dict:
 
 def fetch(url, timeout=None, referer=None, max_body=None, verify=None, custom_headers=None):
     timeout = timeout or CFG['timeout']; max_body = max_body or CFG['max_response']
-    if verify is None: verify = any(d in url for d in ('bing.com','microsoft.com'))
+    if verify is None: verify = _is_self_domain(url)
     validate_url(url); _throttle(); errs = []
     tid = _trace_id(); t0 = time.time()
     log.debug(f'[{tid}] fetch: {url[:120]}')
