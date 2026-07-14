@@ -699,7 +699,7 @@ def search_bing(query, count=15, freshness=None, safesearch=None, offset=0,
         log.info(f'  {lb}: => total {len(all_r)}')
         if len(all_r) >= count: break
     if search_type != 'web' and len(all_r) < count and len(langs) == 1:
-        results2, meta2 = _search_bing_lang(query, count, 'en', 'EN', freshness, safesearch, offset, search_type)
+        results2, meta2 = _search_bing_lang(query, count, 'en', freshness, safesearch, offset, search_type)
         if meta2: all_meta.update(meta2)
         for r in results2:
             if r['url'] not in seen and len(all_r) < count: seen.add(r['url']); all_r.append(r)
@@ -852,12 +852,11 @@ def _parse_headers(h):
         except json.JSONDecodeError: raise ValueError('headers 格式错误')
     raise ValueError('headers 应为字典')
 
-# 搜索类型 → 处理函数映射（精简4个if为1个lookup）
+# 搜索类型 → 处理函数映射
 _SEARCH_TYPES = {'search_web':'web', 'search_images':'images', 'search_news':'news', 'search_videos':'videos'}
 
 # Schema 查找 — 从 inputSchema 的 properties 自动推导
 def _schema_from_tool(name: str) -> dict:
-    """从ALL_TOOLS定义中提取运行时校验schema"""
     props = ALL_TOOLS.get(name, {}).get('inputSchema', {}).get('properties', {})
     result = {}
     type_map = {'string':'str', 'integer':'int', 'boolean':'bool', 'object':'str'}
@@ -881,7 +880,7 @@ def dispatch(line):
         ci = params.get('clientInfo',{})
         log.info(f'[{tid}] 连接: {ci.get("name","?")} v{ci.get("version","?")}')
         return _jr(mid, {'protocolVersion':'2024-11-05','capabilities':{'tools':{}},
-                         'serverInfo':{'name':'web-search-v2','version':'3.0.0'}})
+                         'serverInfo':{'name':'web-search-v2','version':'3.1.0'}})
     if method in ('notifications/initialized','notifications/cancelled'): return None
     if method == 'shutdown': return _jr(mid, None)
     if method == 'exit': raise SystemExit()
@@ -891,7 +890,6 @@ def dispatch(line):
         name, args = params.get('name',''), params.get('arguments',{})
         log.info(f'[{tid}] 调用: {name}')
         try:
-            # 搜索类型工具 — 统一调度到 search_bing
             if search_type := _SEARCH_TYPES.get(name):
                 v = validate_args(args, _schema_from_tool(name))
                 result = search_bing(v['query'], v.get('count', 15),
@@ -933,7 +931,7 @@ def dispatch(line):
 def _run_stdio():
     socket.setdefaulttimeout(30)
     li = f'{CFG["default_limit"]}字符' if CFG['default_limit']>0 else '无限制'
-    log.info(f'启动 v3.0.0 (STDIO) | 代理:{CFG["proxy"] or "无"} | TTL:{CFG["ttl"]}s | 缓存:{CFG["cap"]} | 默认:{li}')
+    log.info(f'启动 v3.1.0 (STDIO) | 代理:{CFG["proxy"] or "无"} | TTL:{CFG["ttl"]}s | 缓存:{CFG["cap"]} | 默认:{li}')
     log.info(f'工具({len(TOOLS)}): {", ".join(TOOLS.keys())}')
     if ENABLED_TOOLS: log.info(f'启禁: 白名单 {ENABLED_TOOLS}')
     if DISABLED_TOOLS: log.info(f'启禁: 黑名单 {DISABLED_TOOLS}')
@@ -954,7 +952,6 @@ def _run_http():
 
     class MCPHTTPHandler(BaseHTTPRequestHandler):
         def log_message(self, *a): pass
-        # 防开放重定向（参考 CPython gh-87389）
         def _norm_path(self):
             if self.path.startswith('//'):
                 self.path = '/' + self.path.lstrip('/')
@@ -976,12 +973,11 @@ def _run_http():
                 else: self.send_response(204); self.end_headers()
             except Exception as e:
                 log.error(f'[{tid}] HTTP error: {e}')
-                # 防XSS：转义用户可控值（参考 CPython #1100201）
                 self.send_error(500, _html.escape(str(e)[:200]))
         def do_GET(self):
             self._norm_path()
             if self.path in ('/ping', '/'):
-                msg = json.dumps({'status':'ok', 'service':'web-search-v2', 'version':'3.0.0',
+                msg = json.dumps({'status':'ok', 'service':'web-search-v2', 'version':'3.1.0',
                                   'tools':list(TOOLS.keys()), 'cache':_cache.stats()}, ensure_ascii=False)
                 self.send_response(200); self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(msg))); self.end_headers()
@@ -989,7 +985,7 @@ def _run_http():
             else: self.send_error(404, 'Not Found')
 
     server = HTTPServer((CFG['http_host'], CFG['http_port']), MCPHTTPHandler)
-    log.info(f'启动 v3.0.0 (HTTP) | {CFG["http_host"]}:{CFG["http_port"]} | stateless:{CFG["stateless"]}')
+    log.info(f'启动 v3.1.0 (HTTP) | {CFG["http_host"]}:{CFG["http_port"]} | stateless:{CFG["stateless"]}')
     log.info(f'工具({len(TOOLS)}): {", ".join(TOOLS.keys())}')
     try: server.serve_forever()
     except KeyboardInterrupt: server.shutdown(); log.info('HTTP服务已停止')
