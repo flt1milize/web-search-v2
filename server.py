@@ -763,51 +763,43 @@ def search_bing(query, count=15, freshness=None, safesearch=None, offset=0,
     return data
 
 # ═══════════════════════════════════════════════════════════════
-# 网页抓取
+# 网页抓取 — 合并 fetch_page + fetch_markdown 为统一接口
 # ═══════════════════════════════════════════════════════════════
-def fetch_page(url, max_len=5000, start_index=0, custom_headers=None, no_cache=False):
-    cache_key = f'F\x00{url}\x00{max_len}\x00{start_index}'
-    if not no_cache and (c := _cache.get(cache_key)): return c
+def _fetch_url(url, max_len=5000, start_index=0, custom_headers=None, fmt='text', readable=False, no_cache=False):
+    """统一的网页抓取函数，支持 text/json/markdown 三种格式"""
     u = url.strip()
-    if not u.startswith(('http://','https://')): u = 'https://'+u
+    if not u.startswith(('http://','https://')): u = 'https://' + u
+    cache_key = f'{fmt}\x00{u}\x00{max_len}\x00{start_index}\x00{readable}'
+    if not no_cache and (c := _cache.get(cache_key)): return c
     validate_url(u)
-    log.info(f'抓取: {u[:80]}')
+    log.info(f'抓取({"Readable+MD" if fmt=="markdown" and readable else fmt}): {u[:80]}')
     try: html = fetch(u, verify=False, custom_headers=custom_headers)
     except Exception as e: log.warning(f'  失败: {e}'); raise
+    title = _html.unescape(clean_text(m.group(1))) if (m := _RE_TITLE.search(html)) else ''
+
+    if fmt == 'markdown':
+        md = html_to_markdown(extract_readable(html) if readable else html)
+        md = apply_length_limits(md, max_len, start_index)
+        data = {'url': u, 'title': title, 'format': 'markdown', 'mode': 'readable' if readable else 'full',
+                'length': len(md), 'content': md, '_rate_limit': get_rate_limit_status()}
+        _cache.set(cache_key, data, nocache=no_cache)
+        log.info(f'  markdown: {len(md)} 字符 ({data["mode"]})'); return data
+
+    # text/json mode
     try:
         parsed = json.loads(html)
         if isinstance(parsed, (dict, list)):
-            fmt = json.dumps(parsed, indent=2, ensure_ascii=False)
-            fmt = apply_length_limits(fmt, max_len, start_index)
-            data = {'url':u, 'title':'', 'format':'json', 'length':len(fmt), 'content':fmt,
-                    '_rate_limit':get_rate_limit_status()}
+            content = apply_length_limits(json.dumps(parsed, indent=2, ensure_ascii=False), max_len, start_index)
+            data = {'url': u, 'title': '', 'format': 'json', 'length': len(content), 'content': content,
+                    '_rate_limit': get_rate_limit_status()}
             _cache.set(cache_key, data, nocache=no_cache)
-            log.info(f'  JSON: {len(fmt)} 字符'); return data
+            log.info(f'  JSON: {len(content)} 字符'); return data
     except (json.JSONDecodeError, ValueError): pass
-    title = _html.unescape(clean_text(m.group(1))) if (m:=_RE_TITLE.search(html)) else ''
-    text = clean_text(html); text = apply_length_limits(text, max_len, start_index)
-    data = {'url':u, 'title':title, 'format':'text', 'length':len(text), 'content':text,
-            '_rate_limit':get_rate_limit_status()}
+    text = apply_length_limits(clean_text(html), max_len, start_index)
+    data = {'url': u, 'title': title, 'format': 'text', 'length': len(text), 'content': text,
+            '_rate_limit': get_rate_limit_status()}
     _cache.set(cache_key, data, nocache=no_cache)
     log.info(f'  text: {len(text)} 字符'); return data
-
-def fetch_markdown(url, max_len=5000, start_index=0, custom_headers=None, readable=False, no_cache=False):
-    cache_key = f'M\x00{url}\x00{max_len}\x00{start_index}\x00{readable}'
-    if not no_cache and (c := _cache.get(cache_key)): return c
-    u = url.strip()
-    if not u.startswith(('http://','https://')): u = 'https://'+u
-    validate_url(u)
-    log.info(f'抓取({"Readable+MD" if readable else "MD"}): {u[:80]}')
-    try: html = fetch(u, verify=False, custom_headers=custom_headers)
-    except Exception as e: log.warning(f'  失败: {e}'); raise
-    title = _html.unescape(clean_text(m.group(1))) if (m:=_RE_TITLE.search(html)) else ''
-    md = html_to_markdown(extract_readable(html) if readable else html)
-    md = apply_length_limits(md, max_len, start_index)
-    data = {'url':u, 'title':title, 'format':'markdown',
-            'mode':'readable' if readable else 'full', 'length':len(md), 'content':md,
-            '_rate_limit':get_rate_limit_status()}
-    _cache.set(cache_key, data, nocache=no_cache)
-    log.info(f'  markdown: {len(md)} 字符 ({data["mode"]})'); return data
 
 # ═══════════════════════════════════════════════════════════════
 # MCP — Tool定义 + Schema + 请求分发
@@ -954,14 +946,14 @@ def dispatch(line):
                 return _jr(mid, _tr(result))
             if name == 'fetch_webpage':
                 v = validate_args(args, _schema_from_tool(name))
-                result = fetch_page(v['url'], v.get('max_length', 5000), v.get('start_index', 0),
+                result = _fetch_url(v['url'], v.get('max_length', 5000), v.get('start_index', 0),
                                     _parse_headers(v.get('headers')), no_cache=v.get('no_cache', False))
                 _log_timing(tid, name, t_start)
                 return _jr(mid, _tr(result))
             if name == 'fetch_markdown':
                 v = validate_args(args, _schema_from_tool(name))
-                result = fetch_markdown(v['url'], v.get('max_length', 5000), v.get('start_index', 0),
-                                        _parse_headers(v.get('headers')),
+                result = _fetch_url(v['url'], v.get('max_length', 5000), v.get('start_index', 0),
+                                        _parse_headers(v.get('headers')), fmt='markdown',
                                         readable=v.get('readable', True),
                                         no_cache=v.get('no_cache', False))
                 _log_timing(tid, name, t_start)
