@@ -454,6 +454,35 @@ def _parse_regex(html, count):
                         'snippet':_html.unescape(clean_text(sn.group(1) or '') if sn else ''),'type':'web'})
     return results
 
+# Bing 布局变化检测 — 监控 HTMLParser 依赖的关键 class 名是否存在
+def _detect_bing_layout(html: str) -> list[str]:
+    """检测Bing页面中已知的搜索结果class名是否仍然存在，返回缺失的class名列表"""
+    known_selectors = ['b_algo', 'b_ans', 'b_rs']
+    body = html[:64000]
+    missing = [s for s in known_selectors if s not in body]
+    if missing:
+        log.error(f'Bing 页面结构变化！缺失 class: {", ".join(missing)}')
+    return missing
+
+# 通用链接提取 — 当Bing HTML解析失败时的最后一道防线
+def _parse_generic(html: str, count: int) -> list:
+    """从任意HTML页面提取外链作为搜索结果（兜底解析器）"""
+    body = sanitize(html)
+    body = re.sub(r'<head[^>]*>.*?</head>', '', body, flags=re.DOTALL | re.I)
+    body = _RE_SCRIPT.sub(' ', body)
+    results, seen = [], set()
+    for m in re.finditer(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', body, re.DOTALL | re.I):
+        if len(results) >= count: break
+        u, t = m.group(1), clean_text(m.group(2))
+        if not t or not u or u in seen or _is_self_domain(u): continue
+        if re.search(r'(login|signup|register|privacy|terms|about|help|faq)', u, re.I): continue
+        if len(t) < 5: continue
+        seen.add(u)
+        results.append({'title': _html.unescape(t), 'url': _html.unescape(u),
+                        'snippet': _html.unescape(t), 'type': 'web'})
+    log.info(f'  通用提取: {len(results)} 条 (兜底模式)')
+    return results
+
 def _parse_bing(html, count):
     body = sanitize(html); p = _BingParser()
     try: p.feed(body)
@@ -466,7 +495,13 @@ def _parse_bing(html, count):
             seen.add(u); out.append(_enrich_result(r))
             if len(out) >= count: break
         return out
-    return [_enrich_result(r) for r in _parse_regex(html, count)]
+    # 回退1：正则解析
+    regex_results = [_enrich_result(r) for r in _parse_regex(html, count)]
+    if regex_results:
+        return regex_results
+    # 回退2：通用链接提取（兜底）
+    _detect_bing_layout(html)
+    return [_enrich_result(r) for r in _parse_generic(html, count)]
 
 def _enrich_result(r: dict) -> dict:
     try:
