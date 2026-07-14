@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""web-search-v2 MCP Server — Bing多模态搜索 + 网页抓取 | v3.1.0
+"""web-search v3.1.0 MCP Server — Bing多模态搜索 + 网页抓取
 
 改进内容（参考 brave-search-mcp-server）：
   - 搜索参数丰富度：freshness/safesearch/offset/country/search_lang
