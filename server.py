@@ -68,17 +68,31 @@ def is_tool_permitted(name: str) -> bool:
 
 UA = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Safari/605.1.15',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 14; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36',
+    'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.200 Mobile Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0',
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1',
 ]
-BASE_HDR = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Encoding': 'gzip, deflate', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Cache-Control': 'max-age=0', 'Connection': 'keep-alive', 'DNT': '1',
-}
+_LANG_POOL = ['zh-CN,zh;q=0.9,en;q=0.8', 'en-US,en;q=0.9,zh;q=0.5', 'zh-CN,zh;q=0.9', 'en;q=0.9']
+def _random_headers():
+    return {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept-Language': random.choice(_LANG_POOL),
+        'Cache-Control': 'max-age=0',
+        'Connection': 'keep-alive',
+        'DNT': '1',
+        'Upgrade-Insecure-Requests': '1',
+    }
 
 ALLOWED_CUSTOM_HEADERS = frozenset({
     'User-Agent', 'Accept', 'Accept-Language', 'Accept-Encoding',
@@ -167,17 +181,17 @@ def _make_opener(verify=True):
 # 自适应限速 — 线程安全 + 暴露状态
 # ═══════════════════════════════════════════════════════════════
 class _RateLimiter:
-    """线程安全的限速器，使用 Lock 保护共享状态（参考 CPython threading.Lock 最佳实践）"""
-    def __init__(s): s._lock = threading.Lock(); s._t0 = 0.0; s._bo = 0.5; s._blocked = 0
+    """线程安全限速器 — 温和退避策略，降低被 Bing 封禁的概率"""
+    def __init__(s): s._lock = threading.Lock(); s._t0 = 0.0; s._bo = 0.2; s._blocked = 0; s._ok = 0
     def throttle(s):
         with s._lock:
-            d = random.uniform(0.5, max(2.0, s._bo))
+            d = random.uniform(0.1, 0.5) if s._ok > 10 else random.uniform(0.2, max(1.0, s._bo))
             if (elapsed := time.time() - s._t0) < d: time.sleep(d - elapsed)
             s._t0 = time.time()
     def mark_blocked(s):
-        with s._lock: s._bo = min(s._bo * 2, 60); s._blocked += 1
+        with s._lock: s._bo = min(s._bo * 1.5, 30); s._blocked += 1; s._ok = 0
     def mark_ok(s):
-        with s._lock: s._bo = max(s._bo * 0.9, 0.5)
+        with s._lock: s._bo = max(s._bo * 0.95, 0.2); s._ok += 1
     def status(s) -> dict:
         with s._lock: return {'current_backoff_seconds': round(s._bo, 1), 'blocked_count': s._blocked}
 
@@ -654,11 +668,11 @@ def _get_opener(verify):
 def fetch(url, timeout=None, referer=None, max_body=None, verify=None, custom_headers=None):
     timeout = timeout or CFG['timeout']; max_body = max_body or CFG['max_response']
     if verify is None: verify = _is_self_domain(url)
-    validate_url(url); _throttle(); errs = []
+    validate_url(url); _throttle(); time.sleep(random.uniform(0, 0.3)); errs = []
     tid = _trace_id(); t0 = time.time()
     log.debug(f'[{tid}] fetch: {url[:120]}')
     for i in range(CFG['retry']+1):
-        hdrs = dict(BASE_HDR, **{'User-Agent': random.choice(UA)})
+        hdrs = _random_headers(); hdrs['User-Agent'] = random.choice(UA)
         if referer: hdrs['Referer'] = referer
         filtered = _filter_headers(custom_headers)
         if filtered: hdrs.update(filtered)
