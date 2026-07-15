@@ -472,7 +472,8 @@ def _parse_generic(html: str, count: int) -> list:
     body = re.sub(r'<head[^>]*>.*?</head>', '', body, flags=re.DOTALL | re.I)
     body = _RE_SCRIPT.sub(' ', body)
     results, seen = [], set()
-    for m in re.finditer(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', body, re.DOTALL | re.I):
+    _RE_HREF = re.compile(r'<a[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', re.DOTALL | re.I)
+    for m in _RE_HREF.finditer(body):
         if len(results) >= count: break
         u, t = m.group(1), clean_text(m.group(2))
         if not t or not u or u in seen or _is_self_domain(u): continue
@@ -552,7 +553,7 @@ def _parse_bing_images(html: str, count: int) -> list:
             if len(results) >= count: break
             img_url = m.group(1)
             if img_url in seen or _is_self_domain(img_url): continue
-            if re.search(r'(icon|avatar|logo|favicon)', img_url, re.I): continue
+            if _RE_ICON.search(img_url): continue
             seen.add(img_url)
             results.append(_enrich_result({'title':'','url':img_url,'image_url':img_url,'type':'image','snippet':''}))
     return results
@@ -644,6 +645,12 @@ def _filter_headers(custom_headers: Optional[dict]) -> dict:
     if not custom_headers: return {}
     return {k: v for k, v in custom_headers.items() if k in ALLOWED_CUSTOM_HEADERS}
 
+_opener_cache = {}
+def _get_opener(verify):
+    if verify not in _opener_cache:
+        _opener_cache[verify] = _make_opener(verify)
+    return _opener_cache[verify]
+
 def fetch(url, timeout=None, referer=None, max_body=None, verify=None, custom_headers=None):
     timeout = timeout or CFG['timeout']; max_body = max_body or CFG['max_response']
     if verify is None: verify = _is_self_domain(url)
@@ -655,7 +662,7 @@ def fetch(url, timeout=None, referer=None, max_body=None, verify=None, custom_he
         if referer: hdrs['Referer'] = referer
         filtered = _filter_headers(custom_headers)
         if filtered: hdrs.update(filtered)
-        opener = _make_opener(verify)
+        opener = _get_opener(verify)
         try:
             resp = opener.open(Request(url, headers=hdrs), timeout=timeout)
             if resp.geturl() != url: validate_url(resp.geturl())
