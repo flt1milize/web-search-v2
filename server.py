@@ -17,6 +17,7 @@
   保留能力: SSRF防护 / 流式读取 / HTML→Markdown / 正文提取 / 表格转换 / JSON检测 / LRU缓存 / 自适应限速
 """
 import gzip, html as _html, json, logging, os, random, re, socket, ssl, sys, threading, time, uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
@@ -742,20 +743,33 @@ def search_bing(query, count=15, freshness=None, safesearch=None, offset=0,
     if not no_cache and (c := _cache.get(cache_key)): return c
     log.info(f'搜索({search_type}): "{query[:60]}" (x{count})')
     all_r, seen, all_meta = [], set(), {}
-    langs = [('zh-Hans','CN'), ('en','EN')] if search_type == 'web' else [('zh-Hans','CN')]
-    for lang, lb in langs:
-        results, meta = _search_bing_lang(query, count, lang, freshness, safesearch, offset, search_type)
-        if meta: all_meta.update(meta)
-        for r in results:
-            if r['url'] not in seen: seen.add(r['url']); all_r.append(r)
+    def _do(lang, lb):
+        r, m = _search_bing_lang(query, count, lang, freshness, safesearch, offset, search_type)
+        return r, m, lb
+    if search_type == 'web':
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fs = {ex.submit(_do, 'zh-Hans', 'CN'): 'CN', ex.submit(_do, 'en', 'EN'): 'EN'}
+            for fu in as_completed(fs):
+                r, m, lb = fu.result()
+                if m: all_meta.update(m)
+                for x in r:
+                    if x['url'] not in seen: seen.add(x['url']); all_r.append(x)
+                log.info(f'  {lb}: => total {len(all_r)} (并行)')
+                if len(all_r) >= count:
+                    for f2 in fs: f2.cancel()
+                    break
+    else:
+        r, m, lb = _do('zh-Hans', 'CN')
+        if m: all_meta.update(m)
+        for x in r:
+            if x['url'] not in seen: seen.add(x['url']); all_r.append(x)
         log.info(f'  {lb}: => total {len(all_r)}')
-        if len(all_r) >= count: break
-    if search_type != 'web' and len(all_r) < count and len(langs) == 1:
-        results2, meta2 = _search_bing_lang(query, count, 'en', freshness, safesearch, offset, search_type)
-        if meta2: all_meta.update(meta2)
-        for r in results2:
-            if r['url'] not in seen and len(all_r) < count: seen.add(r['url']); all_r.append(r)
-        log.info(f'  EN(fallback): => total {len(all_r)}')
+        if len(all_r) < count:
+            r2, m2, _ = _do('en', 'EN')
+            if m2: all_meta.update(m2)
+            for x in r2:
+                if x['url'] not in seen and len(all_r) < count: seen.add(x['url']); all_r.append(x)
+            log.info(f'  EN(fallback): => total {len(all_r)}')
     data = {'query':query, 'engine':'bing', 'type':search_type, 'count':len(all_r[:count]),
             'results':all_r[:count], '_rate_limit':get_rate_limit_status()}
     if all_meta: data['meta'] = all_meta
